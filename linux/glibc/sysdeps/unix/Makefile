@@ -1,0 +1,103 @@
+# Copyright (C) 1991-2012 Free Software Foundation, Inc.
+# This file is part of the GNU C Library.
+
+# The GNU C Library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+
+# The GNU C Library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+
+# You should have received a copy of the GNU Lesser General Public
+# License along with the GNU C Library; if not, see
+# <http://www.gnu.org/licenses/>.
+
+ifndef inhibit-unix-syscalls
+
+# Sysdep dirs unix/... can contain a file syscalls.list,
+# which specifies objects to be compiled as simple Unix system calls.
+
+-include $(common-objpfx)sysd-syscalls
+
+ifeq (misc,$(subdir))
+sysdep_routines += $(unix-extra-syscalls)
+
+ifdef unix-stub-syscalls
+# The system call entry points in this list are supposed to be additional
+# functions not overriding any other sysdeps/.../call.c implementation, but
+# their system call numbers are unavailable in the kernel headers we're
+# using.  Instead of a system call stub, these get a function that fails
+# with ENOSYS.  We just generate a single module defining one function and
+# making all these entry point names aliases for it.
+sysdep_routines += stub-syscalls
+$(objpfx)stub-syscalls.c: $(common-objpfx)sysd-syscalls \
+			  $(..)sysdeps/unix/Makefile
+	$(make-target-directory)
+	(for call in $(unix-stub-syscalls); do \
+	   echo "#define $$call RENAMED_$$call"; \
+	 done; \
+	 echo '#include <errno.h>'; \
+	 for call in $(unix-stub-syscalls); do \
+	   echo "#undef $$call"; \
+	 done; \
+	 echo 'long int _no_syscall (void)'; \
+	 echo '{ __set_errno (ENOSYS); return -1L; }'; \
+	 for call in $(unix-stub-syscalls); do \
+	   case $$call in \
+	   *@@*) ver=$${call##*@}; call=$${call%%*@}; \
+		 echo "strong_alias (_no_syscall, $${call}_$${ver})"; \
+		 echo "default_symbol_version \
+		         ($${call}_$${ver}, $$call, $$ver);" ;; \
+	   *@*) ver=$${call##*@}; call=$${call%%*@}; \
+		echo "strong_alias (_no_syscall, $${call}_$${ver})"; \
+		echo "symbol_version ($${call}_$${ver}, $$call, $$ver);" ;; \
+	   *) echo "weak_alias (_no_syscall, $$call)"; \
+	      echo "stub_warning ($$call)"; \
+	      echo "weak_alias (_no_syscall, __GI_$$call)" ;; \
+	   esac; \
+	 echo '#include <stub-tag.h>'; \
+	 done) > $@T
+	mv -f $@T $@
+generated += stub-syscalls.c
+endif
+endif
+
+# This is the end of the pipeline for compiling the syscall stubs.
+# The stdin is assembler with cpp using sysdep.h macros.
+compile-syscall = $(COMPILE.S) -o $@ -x assembler-with-cpp - \
+			       $(compile-mkdep-flags)
+
+ifndef avoid-generated
+$(common-objpfx)sysd-syscalls: $(..)sysdeps/unix/make-syscalls.sh \
+			       $(wildcard $(+sysdep_dirs:%=%/syscalls.list))
+	for dir in $(+sysdep_dirs); do \
+	  test -f $$dir/syscalls.list && \
+	  { sysdirs='$(sysdirs)' \
+	    asm_CPP='$(COMPILE.S) -E -x assembler-with-cpp' \
+	    $(SHELL) $(dir $<)$(notdir $<) $$dir || exit 1; }; \
+	  test $$dir = $(..)sysdeps/unix && break; \
+	done > $@T
+	mv -f $@T $@
+endif
+
+# The $(bppfx)syscall.ob objects depend on s-proto-bp.d, which are
+# generated to specify dependencies generated BP stubs have on headers.
+# These deps use file names relative to a subdir, so don't
+# include them in the parent directory.
+ifneq (,$(filter $(unix-syscalls),$(routines) $(sysdep_routines) $(aux)))
+ifndef no_deps
+-include $(common-objpfx)s-proto-bp.d
+endif
+endif
+
+$(common-objpfx)s-%.d: $(..)sysdeps/unix/s-%.S \
+		       $(wildcard $(+sysdep_dirs:%=%/syscalls.list))
+	$(+make-deps)
+
+common-generated += s-proto-bp.d
+postclean-generated += sysd-syscalls
+
+endif

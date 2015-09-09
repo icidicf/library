@@ -1,0 +1,95 @@
+GLIBC_PROVIDES dnl See aclocal.m4 in the top level source directory.
+# Local configure fragment for sysdeps/powerpc/powerpc64.
+
+# The Aix ld uses global .symbol_names instead of symbol_names
+# and unfortunately early Linux PPC64 linkers use it as well.
+AC_CACHE_CHECK(for support for omitting dot symbols,
+libc_cv_omit_dot_syms, [dnl
+libc_cv_omit_dot_syms=no
+echo 'void foo (void) {}' > conftest.c
+if AC_TRY_COMMAND(${CC-cc} $CFLAGS $CPPFLAGS -S conftest.c -o conftest.s 1>&AS_MESSAGE_LOG_FD); then
+  if grep -w '\.foo' conftest.s > /dev/null; then
+    :
+  else
+    libc_cv_omit_dot_syms=yes
+  fi
+fi
+rm -f conftest.c conftest.s
+])
+if test x$libc_cv_omit_dot_syms != xyes; then
+  AC_DEFINE(HAVE_ASM_GLOBAL_DOT_NAME)
+fi
+
+AC_CACHE_CHECK(for linker support for overlapping .opd entries,
+libc_cv_overlapping_opd, [dnl
+libc_cv_overlapping_opd=no
+echo 'void foo (void) {}' > conftest.c
+if AC_TRY_COMMAND(${CC-cc} $CFLAGS $CPPFLAGS -S conftest.c -o conftest.s 1>&AS_MESSAGE_LOG_FD); then
+changequote(,)dnl
+  if grep '\.TOC\.@tocbase' conftest.s > /dev/null; then
+    if grep '\.TOC\.@tocbase[ 	]*,[ 	]*0' conftest.s > /dev/null; then
+      :
+    else
+      libc_cv_overlapping_opd=yes
+    fi
+  fi
+changequote([,])dnl
+fi
+rm -f conftest.c conftest.s
+])
+if test x$libc_cv_overlapping_opd = xyes; then
+  AC_DEFINE(USE_PPC64_OVERLAPPING_OPD)
+fi
+
+# Check for support of thread-local storage handling in assembler and
+# linker.
+AC_CACHE_CHECK(for powerpc64 TLS support, libc_cv_powerpc64_tls, [dnl
+cat > conftest.s <<\EOF
+	.section ".tdata","awT",@progbits
+x:      .quad   1
+x1:     .quad   1
+x2:     .quad   1
+x3:     .quad   1
+x4:     .long   1
+	.section ".toc","aw"
+.LC0:
+	.quad	x@dtpmod
+	.quad	x@dtprel
+.LC1:
+	.quad	x1@dtpmod
+	.quad	0
+.LC2:
+	.quad	x@tprel
+	.text
+	addi    3,2,x@got@tlsgd
+	addi    3,2,.LC0@toc
+	addi    3,2,x1@got@tlsld
+	addi    9,3,x1@dtprel
+	addis   9,3,x2@dtprel@ha
+	addi    9,9,x2@dtprel@l
+	ld      9,x3@got@dtprel(2)
+	addi    3,2,.LC0@toc
+	lwz     0,x1@dtprel(3)
+	ld      0,x1@dtprel(3)
+	addis   9,3,x2@dtprel@ha
+	lwz     0,x2@dtprel@l(9)
+	ld      0,x2@dtprel@l(9)
+	ld      9,x3@got@dtprel(2)
+	ld      9,x@got@tprel(2)
+	add     9,9,x@tls
+	ld      9,.LC2@toc(2)
+	add     9,9,.LC2@tls
+	addi    9,13,x1@tprel
+	addis   9,13,x2@tprel@ha
+	addi    9,9,x2@tprel@l
+EOF
+dnl
+if AC_TRY_COMMAND(${CC-cc} -c $CFLAGS conftest.s 1>&AS_MESSAGE_LOG_FD); then
+  libc_cv_powerpc64_tls=yes
+else
+  libc_cv_powerpc64_tls=no
+fi
+rm -f conftest*])
+if test $libc_cv_powerpc64_tls = no; then
+  AC_MSG_ERROR([the assembler must support TLS])
+fi
